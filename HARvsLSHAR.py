@@ -6,49 +6,79 @@ Created on Wed Dec  3 11:51:10 2025
 @author: rbarcrosspbar
 """
 
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import numpy as np
-import pandas as pd 
+import pandas as pd
 import matplotlib.pyplot as plt
 from astropy.timeseries import LombScargle
 from scipy.signal import find_peaks
 import statsmodels.api as sm
 from tkinter import Tk
 from tkinter.filedialog import askopenfilename
-# from datetime import timedelta,datetime
 from concurrent.futures import ProcessPoolExecutor, as_completed
+import warnings
 
+warnings.filterwarnings("ignore")
+
+
+# ======================================================
+# Global parameters
+# ======================================================
 
 alpha = 0.1
+lookback = 256
+step_size = 1
+
+# ======================================================
+# Loss functions
+# ======================================================
+
 def qlike_loss(actual, forecast):
-    return np.log(actual/forecast) + actual / forecast -1
+    return np.log(actual / forecast) + actual / forecast - 1
 
 def rmse(actual, forecast):
-    return np.sqrt(np.mean((actual - forecast)**2))
+    return np.sqrt(np.mean((actual - forecast) ** 2))
+
+# ======================================================
+# RV construction
+# ======================================================
 
 def calc_daily_rv(data):
-    start_time = pd.to_datetime('09:15:00').time() or pd.to_datetime('09:20:00').time()
+    start_time = pd.to_datetime('09:15:00').time()
     end_time = pd.to_datetime('15:30:00').time()
+    in_session = data.between_time(start_time, end_time)
+    rv = in_session['Ret_sq'].resample('D').sum()
+    return rv[rv > 0]
 
-    in_session_data = data.between_time(start_time, end_time, inclusive='both')
-    daily_rv_series = in_session_data['Ret_sq'].resample('D').sum()
-    daily_rv_series = daily_rv_series[daily_rv_series > 0].rename('RV_t')
-    return daily_rv_series
+# ======================================================
+# Lomb–Scargle utilities
+# ======================================================
 
-##### This section does the manual monte-carlo simulation for the FAP calculation
+def select_robust_periods(freq, power, fap, tolerance=1.0):
+    peaks, props = find_peaks(power, height=fap)
+    if len(peaks) == 0:
+        return []
+    periods = 1.0 / freq[peaks]
+    powers = power[peaks]
+    df = pd.DataFrame({'period': periods, 'power': powers})
+    df = df.sort_values('power', ascending=False)
 
-# def mc_fap(t, y, freq, m=1000):
-#     max_powers = []
-#     y_std = np.std(y)
-#     y_mean = np.mean(y)
-#     for i in range(m):
-#         y_sim = y_mean + np.random.normal(0,y_std,len(y))
-#         model_sim = LombScargle(t, y_sim)
-#         power_sim = model_sim.power(freq, normalization="standard")
-#         max_powers.append(np.max(power_sim))
-#     max_powers.sort()
-#     fap_index = int((1-alpha)*m)
-#     fap_threshold = max_powers[fap_index]
-#     return fap_threshold
+    selected = []
+    for p in df['period']:
+        if not any(abs(p - s) < tolerance for s in selected):
+            selected.append(p)
+    return selected
+
+def LS_features(index, periods, scale):
+    t = (index - index[0]).total_seconds() / scale
+    feats = {}
+    for p in periods:
+        f = 1 / p
+        feats[f'Sine_{p:.2f}'] = np.sin(2 * np.pi * f * t)
+        feats[f'Cos_{p:.2f}'] = np.cos(2 * np.pi * f * t)
+    return pd.DataFrame(feats, index=index)
 
 def _single_max_power_sim(t, y_mean, y_std, freq, len_y):
     y_sim = y_mean + np.random.normal(0, y_std, len_y)
@@ -60,583 +90,315 @@ def mc_fap(t, y, freq, alpha, m=1000, max_workers=None):
     y_std = np.std(y)
     y_mean = np.mean(y)
     len_y = len(y)
-    
+
     max_powers = []
-    
+
     with ProcessPoolExecutor(max_workers=max_workers) as executor:
         futures = [
-            executor.submit(_single_max_power_sim, t, y_mean, y_std, freq, len_y)
+            executor.submit(
+                _single_max_power_sim,
+                t, y_mean, y_std, freq, len_y
+            )
             for _ in range(m)
         ]
-        
+
         for future in as_completed(futures):
             max_powers.append(future.result())
 
     max_powers.sort()
-    
-    fap_index = int(np.floor((1 - alpha) * m))
-    fap_index = max(0, min(fap_index, m - 1)) 
-    
-    fap_threshold = max_powers[fap_index]
-    
-    return fap_threshold
+    idx = int(np.floor((1 - alpha) * m))
+    idx = max(0, min(idx, m - 1))
+    return max_powers[idx]
+# ======================================================
+# Load data
+# ======================================================
 
-####### We are analytically calculating the FAP
-
-def LS_features(t_index, unq_periods):
-    time_diffs = t_index - t_index[0]
-    t = pd.to_timedelta(time_diffs).total_seconds().values / 86400 
-    ls_features = pd.DataFrame(index=t_index)
-    for n in unq_periods:
-        f = 1/n
-        ls_features[f'Sine_{n:.2f}'] = np.sin(2*np.pi*f*t)
-        ls_features[f'Cos_{n:.2f}'] = np.cos(2*np.pi*f*t)
-    return ls_features
-
-def LS_features_weekly(t_index, unq_periods):
-    time_diffs = t_index - t_index[0]
-    t = pd.to_timedelta(time_diffs).total_seconds().values / 604800 
-    ls_features = pd.DataFrame(index=t_index)
-    for n in unq_periods:
-        f = 1/n
-        ls_features[f'Sine_{n:.2f}'] = np.sin(2*np.pi*f*t)
-        ls_features[f'Cos_{n:.2f}'] = np.cos(2*np.pi*f*t)
-    return ls_features
-
-def select_robust_periods(freq, power, fap_threshold, frequency_distance, tolerance):
-    peaks, properties = find_peaks(power, height=fap_threshold)
-    sig_freqs = freq[peaks]
-    sig_periods = 1.0 / sig_freqs
-    sig_powers = power[peaks]
-
-    results_df = pd.DataFrame({
-        'Period_Days': sig_periods,
-        'Power': sig_powers
-    }).sort_values(by='Power', ascending=False).reset_index(drop=True)
-
-    def filter_by_period_proximity(df, tolerance):
-        selected_periods = []
-        for _, row in df.iterrows():
-            current_period = row['Period_Days']
-
-            is_too_close = False
-            for selected in selected_periods:
-                if abs(current_period - selected) < tolerance:
-                    is_too_close = True
-                    break
-
-            if not is_too_close:
-                selected_periods.append(current_period)
-
-        final_df = df[df['Period_Days'].isin(selected_periods)].reset_index(drop=True)
-        return final_df
-
-    final_periods_df = filter_by_period_proximity(results_df,tolerance=0.5)
-    
-    return final_periods_df['Period_Days'].tolist()
-
-
-def create_LSHAR_features(Y, X_HAR, period):
-    LS_F = LS_features(Y.index, period)
-    X_LSHAR = pd.concat([X_HAR, LS_F], axis=1)
-    X_LSHAR = sm.add_constant(X_LSHAR)
-    Y = Y.reindex(X_LSHAR.index)
-    return Y, X_LSHAR
-
-def create_LSHAR_weekly_features(Y, X_HAR, period):
-    LS_F = LS_features_weekly(Y.index, period)
-    X_LSHAR = pd.concat([X_HAR, LS_F], axis=1)
-    X_LSHAR = sm.add_constant(X_LSHAR)
-    Y = Y.reindex(X_LSHAR.index)
-    return Y, X_LSHAR
-
-def get_ls_features(t_values, periods):
-    """Generates Sine/Cosine features for absolute time t."""
-    features = {}
-    for n in periods:
-        f = 1.0 / n
-        features[f'Sine_{n:.2f}'] = np.sin(2 * np.pi * f * t_values)
-        features[f'Cos_{n:.2f}'] = np.cos(2 * np.pi * f * t_values)
-    return pd.DataFrame(features)
-
-
-
-#%%
-Tk().withdraw() 
-file = askopenfilename() 
+Tk().withdraw()
+file = askopenfilename()
 
 df = pd.read_csv(file)
+df['Datetime'] = pd.to_datetime(df['Datetime'])
+df = df.set_index('Datetime').sort_index()
 
-df = df.set_index("Datetime").sort_index()
-
-df.index = pd.to_datetime(df.index)
-
-df["Returns"] = np.log(df["Close"]).diff()
-
-df["Ret_sq"] = np.square(df["Returns"])
-
+df['Returns'] = np.log(df['Close']).diff()
+df['Ret_sq'] = df['Returns'] ** 2
 df.dropna(inplace=True)
 
-print(df.head())
-#%%
+# ======================================================
+# RV features
+# ======================================================
+
 rvd = calc_daily_rv(df)
-rvw = rvd.rolling(window = 5).mean()
-rvm = rvd.rolling(window = 22).mean()
+rvw = rvd.rolling(5).mean()
+rvm = rvd.rolling(22).mean()
 
-data_dict = {
-    'rvd' : rvd,
-    'rvw' : rvw,
-    'rvm' : rvm
-    }
+X = np.log(pd.concat([rvd, rvw, rvm], axis=1))
+X.columns = ['rvd', 'rvw', 'rvm']
 
-Y = rvd.shift(-1)
+Y = np.log(rvd.shift(-1))
 
-rv_features = pd.DataFrame(data_dict)
+data = pd.concat([Y.rename('Y'), X], axis=1).dropna()
 
-rv_combined = pd.concat([Y.rename('Y'), rv_features], axis=1).dropna()
+global_start = data.index[0]
 
-t_index = rv_combined.index
+# ======================================================
+# ================= DAILY LSHAR ========================
+# ======================================================
 
-Y = np.log(rv_combined['Y'])
-X = np.log(rv_combined[['rvd', 'rvw', 'rvm']])
+oos_HAR = {'QLIKE': {}, 'RMSE': {}}
+oos_LSHAR = {'QLIKE': {}, 'RMSE': {}}
+oos_Hybrid = {'QLIKE': {}, 'RMSE': {}}
 
-Y.index = Y.index.date
-X.index = X.index.date
+start = data.index.searchsorted(pd.to_datetime('2023-01-01'))
 
-#%%
-Y_1 = rvd.shift(-1)
-rv_combined_1 = pd.concat([Y_1.rename('Y_1'), rv_features], axis=1).dropna()
-Y_1_log = np.log(rv_combined_1['Y_1'])
-X_1_log = np.log(rv_combined_1[['rvd', 'rvw', 'rvm']])
-RVd_full = rv_combined_1['rvd']
-RVw_full = rv_combined_1['rvw']
+while start + lookback < len(data):
 
-Y_1_log.index = Y_1_log.index.date
-X_1_log.index = X_1_log.index.date
-RVd_full.index = RVd_full.index.date
+    train = data.iloc[start:start + lookback]
+    test_idx = start + lookback
 
+    X_train = train[['rvd', 'rvw', 'rvm']]
+    Y_train = train['Y']
 
-oos_errors_HAR = {'QLIKE': {}, 'RMSE': {}}
-oos_errors_Hybrid = {'QLIKE': {}, 'RMSE': {}}
+    X_test = X.iloc[[test_idx]]
+    actual_rv = rvd.iloc[test_idx]
 
+    # HAR
+    har = sm.OLS(Y_train, sm.add_constant(X_train)).fit()
+    mu = har.predict(sm.add_constant(X_test, has_constant='add')).iloc[0]
+    sigma2 = har.mse_resid
+    har_pred = np.exp(mu + sigma2 / 2)
 
-oos_preds_1d_step_ahead = {} 
-oos_errors = {'QLIKE': {}, 'RMSE': {}} 
+    oos_HAR['QLIKE'][data.index[test_idx]] = qlike_loss(actual_rv, har_pred)
+    oos_HAR['RMSE'][data.index[test_idx]] = (actual_rv - har_pred) ** 2
 
-lookback = 256
-step_size = 1 
-start_date_train = pd.to_datetime('2023-01-01').date() 
-global_start = X_1_log.index[0]
+    # Lomb–Scargle
+    t = (X_train.index - global_start).total_seconds() / 86400
+    ls = LombScargle(t, X_train['rvd'].values)
+    freq = np.linspace(1 / lookback, 0.5, 5 * lookback)
+    power = ls.power(freq)
+    fap = ls.false_alarm_level(alpha)
+    if isinstance(fap, (np.ndarray, list)):
+        fap = float(np.max(fap))
 
-#%%
-try:
-    start = X_1_log.index.get_loc(start_date_train) 
-except KeyError:
-    start = X_1_log.index.searchsorted(start_date_train)
-if start < 0: start = 0
+    periods = select_robust_periods(freq, power, fap)
 
-# fap_method = "manual"
-fap_method = ""
+    if periods:
+        LS_train = LS_features(X_train.index, periods, 86400)
+        X_aug = sm.add_constant(pd.concat([X_train, LS_train], axis=1))
+        lshar = sm.OLS(Y_train, X_aug).fit()
 
-while start + lookback < len(X_1_log)-1: 
-    
-    train_end_index = start + lookback
-    
-    x_har_train = X_1_log.iloc[start:train_end_index] 
-    y_target_train = Y_1_log.iloc[start:train_end_index]
-    y_ls = x_har_train['rvd'].values
-    
+        t_oos = (data.index[test_idx] - global_start).total_seconds() / 86400
+        LS_oos = LS_features(
+            pd.Index([data.index[test_idx]]),
+            periods,
+            86400
+        ).reset_index(drop=True)
 
-    time_diffs = x_har_train.index - global_start
-    t_ls = pd.to_timedelta(time_diffs).total_seconds().values / 86400
-    freq_min = 1.0/lookback
-    num_bins = int(5* lookback)
-    freq = np.linspace(freq_min, 0.5*1.05, num_bins)
-    model = LombScargle(t_ls, y_ls) 
-    power = model.power(freq, normalization='standard')
-    
-    if fap_method == 'manual': fap_threshold = np.float64(mc_fap(t_ls, y_ls, freq, alpha))
-    
-    # print(fap_threshold)
-    else:     fap_threshold = np.float64(model.false_alarm_level(alpha))
+        X_oos = pd.concat([X_test.reset_index(drop=True), LS_oos], axis=1)
+        X_oos = sm.add_constant(X_oos, has_constant='add')
+        X_oos.columns = lshar.params.index
 
-    period_distance = 1
-    periods = select_robust_periods(freq, power, fap_threshold, 0.005, period_distance)
-    
-    
-    
-    oos_feature_index = train_end_index
-    if oos_feature_index >= len(X_1_log): break
-    
-    x_oos_har = X_1_log.iloc[oos_feature_index]
-    oos_target_date = Y_1_log.index[oos_feature_index]
-    actual_rv = RVd_full.iloc[oos_feature_index + 1]
-    
-    oos_har_df = pd.DataFrame([x_oos_har], index=[oos_target_date])
-    
-    # HAR Model (Baseline) 
-    try:
-        x_har_train_const = sm.add_constant(x_har_train)
-        y_har_train_aligned = y_target_train.reindex(x_har_train_const.index)
-        har_results = sm.OLS(y_har_train_aligned, x_har_train_const).fit()
+        mu_ls = lshar.predict(X_oos).iloc[0]
+        sigma2_ls = lshar.mse_resid
+        lshar_pred = np.exp(mu_ls + sigma2_ls / 2)
 
-        x_oos_har_const = sm.add_constant(oos_har_df, has_constant='add')
-        x_oos_har_const.columns = har_results.params.index # Align OOS columns
-        
-        har_log_pred = har_results.predict(x_oos_har_const).iloc[0]
-        sigma2_har = har_results.mse_resid
-        forecast_rv_har = np.exp(har_log_pred + sigma2_har / 2)
-        
+        oos_LSHAR['QLIKE'][data.index[test_idx]] = qlike_loss(actual_rv, lshar_pred)
+        oos_LSHAR['RMSE'][data.index[test_idx]] = (actual_rv - lshar_pred) ** 2
 
-        oos_errors_HAR['QLIKE'][oos_target_date] = qlike_loss(actual_rv, forecast_rv_har)
-        oos_errors_HAR['RMSE'][oos_target_date] = (actual_rv - forecast_rv_har)**2
+        hybrid_pred = lshar_pred
+    else:
+        hybrid_pred = har_pred
 
-        # LSHAR/Hybrid Model 
-        if periods:
-            
-            y_lshar_train, x_lshar_train = create_LSHAR_features(y_target_train, x_har_train, periods)
-            ols_results = sm.OLS(y_lshar_train, x_lshar_train).fit()
+    oos_Hybrid['QLIKE'][data.index[test_idx]] = qlike_loss(actual_rv, hybrid_pred)
+    oos_Hybrid['RMSE'][data.index[test_idx]] = (actual_rv - hybrid_pred) ** 2
 
-      
-            oos_time = (oos_target_date - x_har_train.index[0]).total_seconds() / 86400
-            oos_ls_features = pd.DataFrame(index=[oos_target_date])
-            for n in periods:
-                f = 1/n
-                oos_ls_features[f'Sine_{n:.2f}'] = np.sin(2*np.pi*f*oos_time)
-                oos_ls_features[f'Cos_{n:.2f}'] = np.cos(2*np.pi*f*oos_time)
-            
-            
-            x_oos_har_no_const = oos_har_df.reset_index(drop=True)
-            oos_ls_features_no_index = oos_ls_features.reset_index(drop=True)
-            x_oos_lshar = pd.concat([x_oos_har_no_const, oos_ls_features_no_index], axis=1)
-            x_oos_lshar = sm.add_constant(x_oos_lshar, has_constant='add') # Add constant back
+    start += step_size
+print("\n" + "="*60)
+print("DAILY FORECASTING RESULTS")
+print("="*60)
 
-            x_oos_lshar.columns = ols_results.params.index # Align columns to LSHAR params
-            
-            oos_log_pred = ols_results.predict(x_oos_lshar).iloc[0]
-            sigma2_hybrid = ols_results.mse_resid
-            forecast_rv_hybrid = np.exp(oos_log_pred + sigma2_hybrid / 2)
-            
+har_qlike = np.mean(list(oos_HAR['QLIKE'].values()))
+har_rmse  = np.sqrt(np.mean(list(oos_HAR['RMSE'].values())))
 
-            oos_preds_1d_step_ahead[oos_target_date] = forecast_rv_hybrid
-            oos_errors['QLIKE'][oos_target_date] = qlike_loss(actual_rv, forecast_rv_hybrid)
-            oos_errors['RMSE'][oos_target_date] = (actual_rv - forecast_rv_hybrid)**2
-            print(start)
-            # plt.plot(freq, power)
-            # # plt.title("Lomb-Scargle Periodogram")
-            # plt.xlabel("Frequency-->")
-            # plt.ylabel("Power-->")
-            # plt.axhline(fap_threshold, color='red')
-            # plt.text(0.4, 0.0625, 'fap_threshold', bbox=dict(facecolor='red', alpha=0.5))
-            # plt.show()
-            
-        else:
+# hyb_qlike = np.mean(list(oos_Hybrid['QLIKE'].values()))
+# hyb_rmse  = np.sqrt(np.mean(list(oos_Hybrid['RMSE'].values())))
 
-            forecast_rv_hybrid = forecast_rv_har
-            
+# print(f"HAR     | QLIKE: {har_qlike:.6f} | RMSE: {har_rmse:.6f}")
+# print(f"HYBRID  | QLIKE: {hyb_qlike:.6f} | RMSE: {hyb_rmse:.6f}")
 
-        oos_errors_Hybrid['QLIKE'][oos_target_date] = qlike_loss(actual_rv, forecast_rv_hybrid)
-        oos_errors_Hybrid['RMSE'][oos_target_date] = (actual_rv - forecast_rv_hybrid)**2
-        
-        start += step_size
-        
-    except Exception as e:
-        print(f"Error for section-{start}: {e}")
-        start += step_size
-        continue
-
-if oos_errors_HAR:
-    final_qlike_har = np.mean(list(oos_errors_HAR['QLIKE'].values()))
-    final_rmse_har = np.sqrt(np.mean(list(oos_errors_HAR['RMSE'].values())))
-    total_har_preds = len(oos_errors_HAR['QLIKE'])
-
-    final_qlike_hybrid = np.mean(list(oos_errors_Hybrid['QLIKE'].values()))
-    final_rmse_hybrid = np.sqrt(np.mean(list(oos_errors_Hybrid['RMSE'].values())))
-    
-    
-    print("Out-of-Sample Performance Comparison (Full Period)")
-    print(f"Total Predictions (Full Period):** {total_har_preds}")
-    print("---" * 15)
-    
-    print("HAR Baseline Model Performance")
-    print(f"* Average QLIKE Loss: {final_qlike_har:.6f}")
-    print(f"* Final RMSE: {final_rmse_har:.6f}")
-    print("---" * 15)
-    
-    print("LSHAR/HAR Hybrid Model Performance")
-    print(f"* Average QLIKE Loss: {final_qlike_hybrid:.6f}")
-    print(f"* Final RMSE: {final_rmse_hybrid:.6f}")
-    print("---" * 15)
-    
-    
-    if oos_errors['QLIKE']:
-        final_qlike_lshar_only = np.mean(list(oos_errors['QLIKE'].values()))
-        final_rmse_lshar_only = np.sqrt(np.mean(list(oos_errors['RMSE'].values())))
-        print("LSHAR-Only Model Performance (Diagnostic)")
-        print(f"* **Predictions Count:** {len(oos_errors['QLIKE'])}")
-        print(f"* Average QLIKE Loss: {final_qlike_lshar_only:.6f}")
-        print(f"* Final RMSE: {final_rmse_lshar_only:.6f}")
-        print("---" * 15)
+if oos_LSHAR['QLIKE']:
+    lshar_qlike = np.mean(list(oos_LSHAR['QLIKE'].values()))
+    lshar_rmse  = np.sqrt(np.mean(list(oos_LSHAR['RMSE'].values())))
+    # print(f"LSHAR   | QLIKE: {lshar_qlike:.6f} | RMSE: {lshar_rmse:.6f}")
+    # print(f"LSHAR ACTIVE DAYS: {len(oos_LSHAR['QLIKE'])}")
 else:
-    print("No out-of-sample predictions were made.")
+    print("LSHAR never activated in daily setting.")
     
-#%%
+if oos_LSHAR['QLIKE']:
+    har_filtered_qlike = np.mean([
+        oos_HAR['QLIKE'][d] for d in oos_LSHAR['QLIKE'].keys()
+    ])
 
-#we will now work with weekly data such that, the periodicities are much stabler
+    print("\nAPLES-TO-APPLES (LS ACTIVE DAYS ONLY)")
+    print(f"HAR (filtered) QLIKE:  {har_filtered_qlike:.6f}")
+    print(f"LSHAR QLIKE:          {lshar_qlike:.6f}")
+    print(f"HAR (filtered) RMSE:  {har_rmse:.6f}")
+    print(f"LSHAR RMSE:          {lshar_rmse:.6f}")
 
-lookback = 256
-step_size = 1 
-start_date_train = pd.to_datetime('2023-01-01').date() 
+# ======================================================
+# ================= WEEKLY LSHAR =======================
+# ======================================================
+
+oos_weekly_HAR = {'QLIKE': {}, 'RMSE': {}}
+oos_weekly_LSHAR = {'QLIKE': {}, 'RMSE': {}}
+oos_weekly_Hybrid = {'QLIKE': {}, 'RMSE': {}}
 lookback_weeks = 52
-global_start = X_1_log.index[0]
-try:
-    start = X_1_log.index.get_loc(start_date_train) 
-except KeyError:
-    start = X_1_log.index.searchsorted(start_date_train)
-if start < 0: start = 0
+start = data.index.searchsorted(pd.to_datetime('2023-01-01'))
 
-oos_errors = {'QLIKE': {}, 'RMSE': {}}
+while start + lookback < len(data):
 
-while start + lookback < len(X_1_log)-1: 
-    
-    train_end_index = start + lookback
-    
-    x_har_train = X_1_log.iloc[start:train_end_index] 
-    y_target_train = Y_1_log.iloc[start:train_end_index]
-    y_ls = x_har_train['rvw'].values
-    
+    train = data.iloc[start:start + lookback]
+    test_idx = start + lookback
 
-    time_diffs = x_har_train.index - global_start
-    t_ls = pd.to_timedelta(time_diffs).total_seconds().values / 604800
-    freq_min = 1.0/lookback_weeks
-    num_bins = int(5* lookback_weeks)
-    freq = np.linspace(freq_min, 1*1.05, num_bins)
-    model = LombScargle(t_ls, y_ls) 
-    power = model.power(freq, normalization='standard')
-    
-    # fap_threshold = np.float64(mc_fap(t_ls, y_ls, freq, alpha))
-    fap_threshold = np.float64(model.false_alarm_level(alpha))
-    period_distance = 1
-    periods = select_robust_periods(freq, power, fap_threshold, 0.005, period_distance)
-    
-    # plt.plot(freq, power)
-    # plt.text(0.4, np.max(power)-0.01, start+lookback)
-    # plt.axhline(fap_threshold)
-    # plt.show()
-    
-    
-    
-    oos_feature_index = train_end_index
-    if oos_feature_index >= len(X_1_log): break
-    
-    x_oos_har = X_1_log.iloc[oos_feature_index]
-    oos_target_date = Y_1_log.index[oos_feature_index]
-    actual_rv = RVd_full.iloc[oos_feature_index + 1]
-    oos_har_df = pd.DataFrame([x_oos_har], index=[oos_target_date])
-    
-    # HAR Model (Baseline) 
-    try:
-        x_har_train_const = sm.add_constant(x_har_train)
-        y_har_train_aligned = y_target_train.reindex(x_har_train_const.index)
-        har_results = sm.OLS(y_har_train_aligned, x_har_train_const).fit()
+    X_train = train[['rvd', 'rvw', 'rvm']]
+    Y_train = train['Y']
 
-        x_oos_har_const = sm.add_constant(oos_har_df, has_constant='add')
-        x_oos_har_const.columns = har_results.params.index # Align OOS columns
-        
-        har_log_pred = har_results.predict(x_oos_har_const).iloc[0]
-        sigma2_har = har_results.mse_resid
-        forecast_rv_har = np.exp(har_log_pred + sigma2_har / 2)
-        
+    X_test = X.iloc[[test_idx]]
+    actual_rv = rvd.iloc[test_idx]
 
-        oos_errors_HAR['QLIKE'][oos_target_date] = qlike_loss(actual_rv, forecast_rv_har)
-        oos_errors_HAR['RMSE'][oos_target_date] = (actual_rv - forecast_rv_har)**2
+    har = sm.OLS(Y_train, sm.add_constant(X_train)).fit()
+    mu = har.predict(sm.add_constant(X_test, has_constant='add')).iloc[0]
+    sigma2 = har.mse_resid
+    har_pred = np.exp(mu + sigma2 / 2)
 
-        # LSHAR/Hybrid Model 
-        if periods:
-            
-            y_lshar_train, x_lshar_train = create_LSHAR_weekly_features(y_target_train, x_har_train, periods)
-            ols_results = sm.OLS(y_lshar_train, x_lshar_train).fit()
+    t = (X_train.index - global_start).total_seconds() / 604800
+    ls = LombScargle(t, X_train['rvw'].values)
+    freq = np.linspace(1 / lookback_weeks, 1.0, 5 * lookback_weeks)
+    power = ls.power(freq)
+    fap = ls.false_alarm_level(alpha)
+    if isinstance(fap, (np.ndarray, list)):
+        fap = float(np.max(fap))
 
-      
-            oos_feat_date = X_1_log.index[oos_feature_index]
-            oos_time = (oos_feat_date - global_start).total_seconds() / 604800
-            oos_ls_features = pd.DataFrame(index=[oos_target_date])
-            for n in periods:
-                f = 1/n
-                oos_ls_features[f'Sine_{n:.2f}'] = np.sin(2*np.pi*f*oos_time)
-                oos_ls_features[f'Cos_{n:.2f}'] = np.cos(2*np.pi*f*oos_time)
-            
-            
-            x_oos_har_no_const = oos_har_df.reset_index(drop=True)
-            oos_ls_features_no_index = oos_ls_features.reset_index(drop=True)
-            x_oos_lshar = pd.concat([x_oos_har_no_const, oos_ls_features_no_index], axis=1)
-            x_oos_lshar = sm.add_constant(x_oos_lshar, has_constant='add') # Add constant back
+    periods = select_robust_periods(freq, power, fap)
 
-            x_oos_lshar.columns = ols_results.params.index # Align columns to LSHAR params
-            
-            oos_log_pred = ols_results.predict(x_oos_lshar).iloc[0]
-            sigma2_hybrid = ols_results.mse_resid
-            forecast_rv_hybrid = np.exp(oos_log_pred + sigma2_hybrid / 2)
-            
-
-            oos_preds_1d_step_ahead[oos_target_date] = forecast_rv_hybrid
-            oos_errors['QLIKE'][oos_target_date] = qlike_loss(actual_rv, forecast_rv_hybrid)
-            oos_errors['RMSE'][oos_target_date] = (actual_rv - forecast_rv_hybrid)**2
-            print(start)
-            
-        else:
-
-            forecast_rv_hybrid = forecast_rv_har
-            
-
-        oos_errors_Hybrid['QLIKE'][oos_target_date] = qlike_loss(actual_rv, forecast_rv_hybrid)
-        oos_errors_Hybrid['RMSE'][oos_target_date] = (actual_rv - forecast_rv_hybrid)**2
-        
-        start += step_size
-        
-    except Exception as e:
-        print(f"Error for section-{start}: {e}")
-        start += step_size
-        continue
-
-
-if oos_errors_HAR:
-    final_qlike_har = np.mean(list(oos_errors_HAR['QLIKE'].values()))
-    final_rmse_har = np.sqrt(np.mean(list(oos_errors_HAR['RMSE'].values())))
-    total_har_preds = len(oos_errors_HAR['QLIKE'])
-
-    final_qlike_hybrid = np.mean(list(oos_errors_Hybrid['QLIKE'].values()))
-    final_rmse_hybrid = np.sqrt(np.mean(list(oos_errors_Hybrid['RMSE'].values())))
+    if periods:
+        LS_train = LS_features(X_train.index, periods, 604800)
+        X_aug = sm.add_constant(pd.concat([X_train, LS_train], axis=1))
+        model = sm.OLS(Y_train, X_aug).fit()
     
+        t_oos = (data.index[test_idx] - global_start).total_seconds() / 604800
+        LS_oos = LS_features(pd.Index([data.index[test_idx]]), periods, 604800)
     
-    print("Out-of-Sample Performance Comparison (Full Period)")
-    print(f"Total Predictions (Full Period):** {total_har_preds}")
-    print("---" * 15)
+        X_oos = pd.concat(
+            [X_test.reset_index(drop=True), LS_oos.reset_index(drop=True)],
+            axis=1
+        )
+        X_oos = sm.add_constant(X_oos, has_constant='add')
+        X_oos.columns = model.params.index
     
-    print("HAR Baseline Model Performance")
-    print(f"* Average QLIKE Loss: {final_qlike_har:.6f}")
-    print(f"* Final RMSE: {final_rmse_har:.6f}")
-    print("---" * 15)
+        mu_h = model.predict(X_oos).iloc[0]
+        sigma2_h = model.mse_resid
+        lshar_pred = np.exp(mu_h + sigma2_h / 2)
     
-    print("LSHAR/HAR Hybrid Model Performance")
-    print(f"* Average QLIKE Loss: {final_qlike_hybrid:.6f}")
-    print(f"* Final RMSE: {final_rmse_hybrid:.6f}")
-    print("---" * 15)
+        # LSHAR active
+        oos_weekly_LSHAR['QLIKE'][data.index[test_idx]] = qlike_loss(actual_rv, lshar_pred)
+        oos_weekly_LSHAR['RMSE'][data.index[test_idx]] = (actual_rv - lshar_pred) ** 2
     
+        hybrid_pred = lshar_pred
+    else:
+        hybrid_pred = har_pred
+
+# Hybrid always recorded
+    oos_weekly_Hybrid['QLIKE'][data.index[test_idx]] = qlike_loss(actual_rv, hybrid_pred)
+    oos_weekly_Hybrid['RMSE'][data.index[test_idx]] = (actual_rv - hybrid_pred) ** 2
+    start += step_size
     
-    if oos_errors['QLIKE']:
-        final_qlike_lshar_only = np.mean(list(oos_errors['QLIKE'].values()))
-        final_rmse_lshar_only = np.sqrt(np.mean(list(oos_errors['RMSE'].values())))
-        print("LSHAR-Only Model Performance (Diagnostic)")
-        print(f"* **Predictions Count:** {len(oos_errors['QLIKE'])}")
-        print(f"* Average QLIKE Loss: {final_qlike_lshar_only:.6f}")
-        print(f"* Final RMSE: {final_rmse_lshar_only:.6f}")
-        print("---" * 15)
+print("\n" + "="*60)
+print("WEEKLY FORECASTING RESULTS")
+print("="*60)
+
+har_qlike = np.mean(list(oos_weekly_HAR['QLIKE'].values()))
+har_rmse  = np.sqrt(np.mean(list(oos_weekly_HAR['RMSE'].values())))
+
+hyb_qlike = np.mean(list(oos_weekly_Hybrid['QLIKE'].values()))
+hyb_rmse  = np.sqrt(np.mean(list(oos_weekly_Hybrid['RMSE'].values())))
+
+print(f"HAR     | QLIKE: {har_qlike:.6f} | RMSE: {har_rmse:.6f}")
+print(f"HYBRID  | QLIKE: {hyb_qlike:.6f} | RMSE: {hyb_rmse:.6f}")
+
+if oos_weekly_LSHAR['QLIKE']:
+    lshar_qlike = np.mean(list(oos_weekly_LSHAR['QLIKE'].values()))
+    lshar_rmse  = np.sqrt(np.mean(list(oos_weekly_LSHAR['RMSE'].values())))
+    print(f"LSHAR   | QLIKE: {lshar_qlike:.6f} | RMSE: {lshar_rmse:.6f}")
+    print(f"LSHAR ACTIVE WEEKS: {len(oos_weekly_LSHAR['QLIKE'])}")
 else:
-    print("No out-of-sample predictions were made.")
-
-plt.plot(freq, power)
-# plt.title("Lomb-Scargle Periodogram")
-plt.xlabel("Frequency-->")
-plt.ylabel("Power-->")
-plt.axhline(fap_threshold, color='red')
-plt.text(0.8, 0.0625, 'fap_threshold', bbox=dict(facecolor='red', alpha=0.5))
-
-#%% LSHAR on HAR Residuals (Orthogonal Spectral Augmentation)
-LS_periods = 0
-lookback = 256
-alpha = 0.1
-
+    print("LSHAR never activated in weekly setting.")
+# ======================================================
+# ===== RESIDUAL (ORTHOGONAL) SPECTRAL AUGMENTATION =====
+# ======================================================
 
 results = []
-try:
-    curr_idx = X_1_log.index.get_indexer([start_date_train], method='bfill')[0]
-except:
-    curr_idx = X_1_log.index.searchsorted(start_date_train)
+LS_periods = 0
+start = data.index.searchsorted(pd.to_datetime('2023-01-01'))
 
-while curr_idx + lookback < len(X_1_log)-1:
-    
-    train_x = X_1_log.iloc[curr_idx : curr_idx + lookback]
-    train_y = Y_1_log.iloc[curr_idx : curr_idx + lookback]
-    
-    oos_idx = curr_idx + lookback
-    oos_x = X_1_log.iloc[[oos_idx]]
-    
-    
-    oos_actual = RVd_full.iloc[oos_idx + 1]
-    oos_date = X_1_log.index[oos_idx + 1]
-    
-    
-    har_vars = ['rvd', 'rvw', 'rvm']
-    model_har = sm.OLS(train_y, sm.add_constant(train_x[har_vars])).fit()
-    sigma2_har = model_har.mse_resid # Use MSE for consistent variance
-    
-    log_pred_har = model_har.predict(sm.add_constant(oos_x[har_vars], has_constant='add')).iloc[0]
-    pred_rv_har = np.exp(log_pred_har + sigma2_har/2)
+while start + lookback < len(data):
 
-    
-    har_residuals = (train_y - model_har.fittedvalues).values.astype(np.float64)
-    
-    
-    t_train = pd.to_timedelta(train_x.index - global_start).total_seconds().values / 86400.0
-    
-    ls = LombScargle(t_train, har_residuals)
-    freq = np.linspace(1.0/lookback, 1/2, 1000) # Higher resolution for 512 lookback
+    train = data.iloc[start:start + lookback]
+    test_idx = start + lookback
+
+    X_train = train[['rvd', 'rvw', 'rvm']]
+    Y_train = train['Y']
+
+    X_test = X.iloc[[test_idx]]
+    actual_rv = rvd.iloc[test_idx]
+
+    har = sm.OLS(Y_train, sm.add_constant(X_train)).fit()
+    mu = har.predict(sm.add_constant(X_test, has_constant='add')).iloc[0]
+    sigma2 = har.mse_resid
+    har_pred = np.exp(mu + sigma2 / 2)
+
+    resid = Y_train - har.fittedvalues
+
+    t = (X_train.index - global_start).total_seconds() / 86400
+    ls = LombScargle(t, resid.values)
+    freq = np.linspace(1 / lookback, 0.5, 1000)
     power = ls.power(freq)
-    
-    
-    
-    # fap_thresh = np.float64(mc_fap(t_train, har_residuals, freq, alpha))
-    fap_thresh = np.float64(model.false_alarm_level(alpha))
-    if hasattr(fap_thresh, "__len__"): fap_thresh = np.max(fap_thresh)
-    
-    periods = select_robust_periods(freq, power, fap_thresh, 0.005, 1.0)
-    
-    pred_rv_hybrid = pred_rv_har # Default
-    
+    fap = ls.false_alarm_level(alpha)
+    if isinstance(fap, (np.ndarray, list)):
+        fap = float(np.max(fap))
+
+    periods = select_robust_periods(freq, power, fap)
+
+    hybrid_pred = har_pred
+
     if periods:
         LS_periods += 1
-        ls_feats_train = get_ls_features(t_train, periods)
-        model_ls = sm.OLS(har_residuals, sm.add_constant(ls_feats_train)).fit()
-        
-        
-        t_oos = (oos_date - global_start).total_seconds() / 86400
-        ls_feats_oos = get_ls_features(np.array([t_oos]), periods)
-        
-        log_resid_pred = model_ls.predict(sm.add_constant(ls_feats_oos, has_constant='add')).iloc[0]
-        sigma2_hybrid = model_ls.mse_resid
-        
-        
-        pred_rv_hybrid = np.exp(log_pred_har + log_resid_pred + sigma2_hybrid/2)
+        LS_train = LS_features(X_train.index, periods, 86400)
+        model = sm.OLS(resid, sm.add_constant(LS_train)).fit()
+
+        t_oos = (data.index[test_idx] - global_start).total_seconds() / 86400
+        LS_oos = LS_features(pd.Index([data.index[test_idx]]), periods, 86400)
+        resid_pred = model.predict(sm.add_constant(LS_oos, has_constant='add')).iloc[0]
+        hybrid_pred = np.exp(mu + resid_pred + model.mse_resid / 2)
 
     results.append({
-        'Date': oos_date,
-        'Actual': oos_actual,
-        'HAR_Pred': pred_rv_har,
-        'Hybrid_Pred': pred_rv_hybrid
+        'Date': data.index[test_idx],
+        'Actual': actual_rv,
+        'HAR': har_pred,
+        'Hybrid': hybrid_pred
     })
-    # print(curr_idx)
-    curr_idx += step_size
 
-plt.plot(freq, power)
-# plt.title("Lomb-Scargle Periodogram")
-plt.xlabel("Frequency-->")
-plt.ylabel("Power-->")
-plt.axhline(fap_thresh, color='red')
-plt.text(0.4, 0.065, 'fap_threshold', bbox=dict(facecolor='red', alpha=0.5))
-# plt.savefig(f"{file.replace(".csv","_residuals")}.png", dpi=300)
+    start += step_size
 
-# --- 4. Final Evaluation ---
-print(f"Number of LS_periods = {LS_periods}")
-res_df = pd.DataFrame(results).set_index('Date')
-res_df['HAR_QLIKE'] = qlike_loss(res_df['Actual'], res_df['HAR_Pred'])
-res_df['Hybrid_QLIKE'] = qlike_loss(res_df['Actual'], res_df['Hybrid_Pred'])
+# ======================================================
+# Final diagnostics
+# ======================================================
 
-res_df['HAR_SE'] = (res_df['Actual'] - res_df['HAR_Pred'])**2
-res_df['Hybrid_SE'] = (res_df['Actual'] - res_df['Hybrid_Pred'])**2
+res = pd.DataFrame(results).set_index('Date')
 
-print(f"HAR QLIKE: {res_df['HAR_QLIKE'].mean():.6f}")
-print(f"Hybrid QLIKE: {res_df['Hybrid_QLIKE'].mean():.6f}")
-print("-" * 30)
-print(f"HAR RMSE: {np.sqrt(res_df['HAR_SE'].mean()):.6f}")
-print(f"Hybrid RMSE: {np.sqrt(res_df['Hybrid_SE'].mean()):.6f}")
+print("\nResidual-Augmented HAR")
+print("HAR QLIKE:", qlike_loss(res['Actual'], res['HAR']).mean())
+print("Hybrid QLIKE:", qlike_loss(res['Actual'], res['Hybrid']).mean())
+print("HAR RMSE:", rmse(res['Actual'], res['HAR']))
+print("Hybrid RMSE:", rmse(res['Actual'], res['Hybrid']))
+print("LS activations:", LS_periods)
