@@ -555,18 +555,18 @@ except:
     curr_idx = X_1_log.index.searchsorted(start_date_train)
 
 while curr_idx + lookback < len(X_1_log)-1:
-    # 1. Aligned Data Slicing
+    
     train_x = X_1_log.iloc[curr_idx : curr_idx + lookback]
     train_y = Y_1_log.iloc[curr_idx : curr_idx + lookback]
     
     oos_idx = curr_idx + lookback
     oos_x = X_1_log.iloc[[oos_idx]]
     
-    # Target Alignment Fix: Predict tomorrow's RV
+    
     oos_actual = RVd_full.iloc[oos_idx + 1]
     oos_date = X_1_log.index[oos_idx + 1]
     
-    # --- STEP A: Fit HAR Baseline ---
+    
     har_vars = ['rvd', 'rvw', 'rvm']
     model_har = sm.OLS(train_y, sm.add_constant(train_x[har_vars])).fit()
     sigma2_har = model_har.mse_resid # Use MSE for consistent variance
@@ -574,10 +574,10 @@ while curr_idx + lookback < len(X_1_log)-1:
     log_pred_har = model_har.predict(sm.add_constant(oos_x[har_vars], has_constant='add')).iloc[0]
     pred_rv_har = np.exp(log_pred_har + sigma2_har/2)
 
-    # --- STEP B: Fit LS on HAR Residuals (Orthogonal) ---
+    
     har_residuals = (train_y - model_har.fittedvalues).values.astype(np.float64)
     
-    # Precision Fix: Use total_seconds for the time index
+    
     t_train = pd.to_timedelta(train_x.index - global_start).total_seconds().values / 86400.0
     
     ls = LombScargle(t_train, har_residuals)
@@ -599,14 +599,14 @@ while curr_idx + lookback < len(X_1_log)-1:
         ls_feats_train = get_ls_features(t_train, periods)
         model_ls = sm.OLS(har_residuals, sm.add_constant(ls_feats_train)).fit()
         
-        # OOS Time calculation
+        
         t_oos = (oos_date - global_start).total_seconds() / 86400
         ls_feats_oos = get_ls_features(np.array([t_oos]), periods)
         
         log_resid_pred = model_ls.predict(sm.add_constant(ls_feats_oos, has_constant='add')).iloc[0]
         sigma2_hybrid = model_ls.mse_resid
         
-        # Hybrid log prediction = HAR log + Predicted residual error
+        
         pred_rv_hybrid = np.exp(log_pred_har + log_resid_pred + sigma2_hybrid/2)
 
     results.append({
@@ -624,7 +624,7 @@ plt.xlabel("Frequency-->")
 plt.ylabel("Power-->")
 plt.axhline(fap_thresh, color='red')
 plt.text(0.4, 0.065, 'fap_threshold', bbox=dict(facecolor='red', alpha=0.5))
-plt.savefig(f"{file.replace(".csv","_residuals")}.png", dpi=300)
+# plt.savefig(f"{file.replace(".csv","_residuals")}.png", dpi=300)
 
 # --- 4. Final Evaluation ---
 print(f"Number of LS_periods = {LS_periods}")
