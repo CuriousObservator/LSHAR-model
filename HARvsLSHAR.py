@@ -19,6 +19,7 @@ from tkinter import Tk
 from tkinter.filedialog import askopenfilename
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import warnings
+import os
 
 warnings.filterwarnings("ignore")
 
@@ -213,6 +214,10 @@ while start + lookback < len(data):
     oos_Hybrid['RMSE'][data.index[test_idx]] = (actual_rv - hybrid_pred) ** 2
 
     start += step_size
+    
+print("\n" + "="*60)
+display = os.path.basename(file).split('_')[0]
+print(f"ANALYSIS FOR {display} STOCK.")
 print("\n" + "="*60)
 print("DAILY FORECASTING RESULTS")
 print("="*60)
@@ -220,11 +225,11 @@ print("="*60)
 har_qlike = np.mean(list(oos_HAR['QLIKE'].values()))
 har_rmse  = np.sqrt(np.mean(list(oos_HAR['RMSE'].values())))
 
-# hyb_qlike = np.mean(list(oos_Hybrid['QLIKE'].values()))
-# hyb_rmse  = np.sqrt(np.mean(list(oos_Hybrid['RMSE'].values())))
+hyb_qlike = np.mean(list(oos_Hybrid['QLIKE'].values()))
+hyb_rmse  = np.sqrt(np.mean(list(oos_Hybrid['RMSE'].values())))
 
-# print(f"HAR     | QLIKE: {har_qlike:.6f} | RMSE: {har_rmse:.6f}")
-# print(f"HYBRID  | QLIKE: {hyb_qlike:.6f} | RMSE: {hyb_rmse:.6f}")
+print(f"HAR     | QLIKE: {har_qlike:.6f} | RMSE: {har_rmse:.6f}")
+print(f"HYBRID  | QLIKE: {hyb_qlike:.6f} | RMSE: {hyb_rmse:.6f}")
 
 if oos_LSHAR['QLIKE']:
     lshar_qlike = np.mean(list(oos_LSHAR['QLIKE'].values()))
@@ -307,7 +312,9 @@ while start + lookback < len(data):
         hybrid_pred = lshar_pred
     else:
         hybrid_pred = har_pred
-
+    
+    oos_weekly_HAR['QLIKE'][data.index[test_idx]] = qlike_loss(actual_rv, har_pred)
+    oos_weekly_HAR['RMSE'][data.index[test_idx]] = (actual_rv - har_pred) ** 2
 # Hybrid always recorded
     oos_weekly_Hybrid['QLIKE'][data.index[test_idx]] = qlike_loss(actual_rv, hybrid_pred)
     oos_weekly_Hybrid['RMSE'][data.index[test_idx]] = (actual_rv - hybrid_pred) ** 2
@@ -393,12 +400,18 @@ while start + lookback < len(data):
 # ======================================================
 # Final diagnostics
 # ======================================================
-
+print("\n" + "="*60)
+print("RESIDUALS MODELLING RESULTS")
+print("="*60)
 res = pd.DataFrame(results).set_index('Date')
+if(LS_periods<0.5*len(results)):
+    print("No significant LS_periods were found, in the residuals.")
+else:
+    print("\nResidual-Augmented HAR")
+    print("HAR QLIKE:", qlike_loss(res['Actual'], res['HAR']).mean())
+    print("Hybrid QLIKE:", qlike_loss(res['Actual'], res['Hybrid']).mean())
+    print("HAR RMSE:", rmse(res['Actual'], res['HAR']))
+    print("Hybrid RMSE:", rmse(res['Actual'], res['Hybrid']))
+    print("LS activations:", LS_periods)
 
-print("\nResidual-Augmented HAR")
-print("HAR QLIKE:", qlike_loss(res['Actual'], res['HAR']).mean())
-print("Hybrid QLIKE:", qlike_loss(res['Actual'], res['Hybrid']).mean())
-print("HAR RMSE:", rmse(res['Actual'], res['HAR']))
-print("Hybrid RMSE:", rmse(res['Actual'], res['Hybrid']))
-print("LS activations:", LS_periods)
+print("="*60)
