@@ -37,7 +37,7 @@ step_size = 1
 # ======================================================
 
 def qlike_loss(actual, forecast):
-    return np.log(actual / forecast) + actual / forecast - 1
+    return np.log(actual / forecast) + actual / forecast 
 
 def rmse(actual, forecast):
     return np.sqrt(np.mean((actual - forecast) ** 2))
@@ -57,23 +57,28 @@ def calc_daily_rv(data):
 # Lomb–Scargle utilities
 # ======================================================
 
-def select_robust_periods(freq, power, fap, tolerance=1.0):
+def select_robust_periods(freq, power, fap, rel_tol=0.1):
     peaks, props = find_peaks(power, height=fap)
     if len(peaks) == 0:
         return []
+
     periods = 1.0 / freq[peaks]
     powers = power[peaks]
+
     df = pd.DataFrame({'period': periods, 'power': powers})
     df = df.sort_values('power', ascending=False)
 
     selected = []
     for p in df['period']:
-        if not any(abs(p - s) < tolerance for s in selected):
+        if not any(abs(p - s) / s < rel_tol for s in selected):
             selected.append(p)
+
     return selected
 
-def LS_features(index, periods, scale):
-    t = (index - index[0]).total_seconds() / scale
+
+def LS_features(index, periods, scale, base_time):
+    # Subtract global_start, not index[0]
+    t = (index - base_time).total_seconds() / scale 
     feats = {}
     for p in periods:
         f = 1 / p
@@ -173,9 +178,11 @@ while start + lookback < len(data):
     oos_HAR['RMSE'][data.index[test_idx]] = (actual_rv - har_pred) ** 2
 
     # Lomb–Scargle
-    t = (X_train.index - global_start).total_seconds() / 86400
+    t = np.arange(len(X_train))   
     ls = LombScargle(t, X_train['rvd'].values)
-    freq = np.linspace(1 / lookback, 0.5, 5 * lookback)
+    min_period = 5
+    max_period = lookback / 2
+    freq = np.linspace(1 / max_period, 1 / min_period, 2 * lookback)
     power = ls.power(freq)
     fap = ls.false_alarm_level(alpha)
     if isinstance(fap, (np.ndarray, list)):
@@ -184,16 +191,12 @@ while start + lookback < len(data):
     periods = select_robust_periods(freq, power, fap)
 
     if periods:
-        LS_train = LS_features(X_train.index, periods, 86400)
+        LS_train = LS_features(X_train.index, periods, 86400, global_start)
         X_aug = sm.add_constant(pd.concat([X_train, LS_train], axis=1))
         lshar = sm.OLS(Y_train, X_aug).fit()
 
         t_oos = (data.index[test_idx] - global_start).total_seconds() / 86400
-        LS_oos = LS_features(
-            pd.Index([data.index[test_idx]]),
-            periods,
-            86400
-        ).reset_index(drop=True)
+        LS_oos = LS_features(pd.Index([data.index[test_idx]]),periods,86400, global_start).reset_index(drop=True)
 
         X_oos = pd.concat([X_test.reset_index(drop=True), LS_oos], axis=1)
         X_oos = sm.add_constant(X_oos, has_constant='add')
@@ -243,11 +246,14 @@ if oos_LSHAR['QLIKE']:
     har_filtered_qlike = np.mean([
         oos_HAR['QLIKE'][d] for d in oos_LSHAR['QLIKE'].keys()
     ])
+    har_filtered_rmse = np.sqrt(np.mean([
+    oos_HAR['RMSE'][d] for d in oos_LSHAR['RMSE'].keys()
+    ]))
 
     print("\nAPLES-TO-APPLES (LS ACTIVE DAYS ONLY)")
     print(f"HAR (filtered) QLIKE:  {har_filtered_qlike:.6f}")
     print(f"LSHAR QLIKE:          {lshar_qlike:.6f}")
-    print(f"HAR (filtered) RMSE:  {har_rmse:.6f}")
+    print(f"HAR (filtered) RMSE:  {har_filtered_rmse:.6f}")
     print(f"LSHAR RMSE:          {lshar_rmse:.6f}")
 
 # ======================================================
@@ -257,13 +263,14 @@ if oos_LSHAR['QLIKE']:
 oos_weekly_HAR = {'QLIKE': {}, 'RMSE': {}}
 oos_weekly_LSHAR = {'QLIKE': {}, 'RMSE': {}}
 oos_weekly_Hybrid = {'QLIKE': {}, 'RMSE': {}}
-lookback_weeks = 52
+lookback_weeks = 52*5
+weekly_step_size = 5
 start = data.index.searchsorted(pd.to_datetime('2023-01-01'))
 
-while start + lookback < len(data):
+while start + lookback_weeks < len(data):
 
-    train = data.iloc[start:start + lookback]
-    test_idx = start + lookback
+    train = data.iloc[start:start + lookback_weeks]
+    test_idx = start + lookback_weeks
 
     X_train = train[['rvd', 'rvw', 'rvm']]
     Y_train = train['Y']
@@ -276,9 +283,11 @@ while start + lookback < len(data):
     sigma2 = har.mse_resid
     har_pred = np.exp(mu + sigma2 / 2)
 
-    t = (X_train.index - global_start).total_seconds() / 604800
+    t = np.arange(len(X_train)) / 5.0
     ls = LombScargle(t, X_train['rvw'].values)
-    freq = np.linspace(1 / lookback_weeks, 1.0, 5 * lookback_weeks)
+    min_period = 2
+    max_period = (lookback_weeks / 5) / 2  # in weeks
+    freq = np.linspace(1 / max_period, 1 / min_period, 2 * lookback_weeks)
     power = ls.power(freq)
     fap = ls.false_alarm_level(alpha)
     if isinstance(fap, (np.ndarray, list)):
@@ -287,12 +296,12 @@ while start + lookback < len(data):
     periods = select_robust_periods(freq, power, fap)
 
     if periods:
-        LS_train = LS_features(X_train.index, periods, 604800)
+        LS_train = LS_features(X_train.index, periods, 604800, global_start)
         X_aug = sm.add_constant(pd.concat([X_train, LS_train], axis=1))
         model = sm.OLS(Y_train, X_aug).fit()
     
         t_oos = (data.index[test_idx] - global_start).total_seconds() / 604800
-        LS_oos = LS_features(pd.Index([data.index[test_idx]]), periods, 604800)
+        LS_oos = LS_features(pd.Index([data.index[test_idx]]), periods, 604800, global_start)
     
         X_oos = pd.concat(
             [X_test.reset_index(drop=True), LS_oos.reset_index(drop=True)],
@@ -318,7 +327,7 @@ while start + lookback < len(data):
 # Hybrid always recorded
     oos_weekly_Hybrid['QLIKE'][data.index[test_idx]] = qlike_loss(actual_rv, hybrid_pred)
     oos_weekly_Hybrid['RMSE'][data.index[test_idx]] = (actual_rv - hybrid_pred) ** 2
-    start += step_size
+    start += weekly_step_size
     
 print("\n" + "="*60)
 print("WEEKLY FORECASTING RESULTS")
@@ -366,9 +375,11 @@ while start + lookback < len(data):
 
     resid = Y_train - har.fittedvalues
 
-    t = (X_train.index - global_start).total_seconds() / 86400
+    t = np.arange(len(resid))
     ls = LombScargle(t, resid.values)
-    freq = np.linspace(1 / lookback, 0.5, 1000)
+    min_period = 5
+    max_period = lookback / 2
+    freq = np.linspace(1 / max_period, 1 / min_period, 2 * lookback)
     power = ls.power(freq)
     fap = ls.false_alarm_level(alpha)
     if isinstance(fap, (np.ndarray, list)):
@@ -380,13 +391,13 @@ while start + lookback < len(data):
 
     if periods:
         LS_periods += 1
-        LS_train = LS_features(X_train.index, periods, 86400)
+        LS_train = LS_features(X_train.index, periods, 86400, global_start)
         model = sm.OLS(resid, sm.add_constant(LS_train)).fit()
 
         t_oos = (data.index[test_idx] - global_start).total_seconds() / 86400
-        LS_oos = LS_features(pd.Index([data.index[test_idx]]), periods, 86400)
+        LS_oos = LS_features(pd.Index([data.index[test_idx]]), periods, 86400, global_start)
         resid_pred = model.predict(sm.add_constant(LS_oos, has_constant='add')).iloc[0]
-        hybrid_pred = np.exp(mu + resid_pred + model.mse_resid / 2)
+        hybrid_pred = np.exp(mu + resid_pred + sigma2 / 2)
 
     results.append({
         'Date': data.index[test_idx],
