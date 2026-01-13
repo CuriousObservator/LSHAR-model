@@ -125,8 +125,10 @@ file = askopenfilename()
 df = pd.read_csv(file)
 df['Datetime'] = pd.to_datetime(df['Datetime'])
 df = df.set_index('Datetime').sort_index()
-
-df['Returns'] = np.log(df['Close']).diff()
+try:
+    df['Returns'] = np.log(df['Close']).diff()
+except:
+    df['Returns'] = np.log(df['close']).diff()
 df['Ret_sq'] = df['Returns'] ** 2
 df.dropna(inplace=True)
 
