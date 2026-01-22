@@ -11,15 +11,16 @@ Created on Wed Dec  3 11:51:10 2025
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+# import matplotlib.pyplot as plt
 from astropy.timeseries import LombScargle
 from scipy.signal import find_peaks
 import statsmodels.api as sm
 from tkinter import Tk
 from tkinter.filedialog import askopenfilename
-from concurrent.futures import ProcessPoolExecutor, as_completed
+# from concurrent.futures import ProcessPoolExecutor, as_completed
 import warnings
 import os
+import sys
 
 warnings.filterwarnings("ignore")
 
@@ -136,8 +137,21 @@ oos_Hybrid = {'QLIKE': {}, 'RMSE': {}}
 
 start = data.index.searchsorted(pd.to_datetime('2023-01-01'))
 
-while start + lookback < len(data):
+if (start + lookback) >= len(data) - 1:
+    print("\n" + "!"*60)
+    print("FATAL ERROR: INSUFFICIENT DATA FOR OUT-OF-SAMPLE TESTING")
+    print("-" * 60)
+    print(f"Dataset Size:          {len(data)} days")
+    print(f"Required for Training: {start + lookback} days")
+    print(f"Available for Testing: {len(data) - (start + lookback)} days")
+    print("-" * 60)
+    print("REASON: The lookback window consumes all available data.")
+    print("FIX: Reduce 'lookback' or move '2023-01-01' to an earlier date.")
+    print("!"*60 + "\n")
+    sys.exit()
 
+while start + lookback < len(data):
+    
     train = data.iloc[start:start + lookback]
     test_idx = start + lookback
 
