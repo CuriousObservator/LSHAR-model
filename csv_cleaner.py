@@ -14,12 +14,18 @@ Tk().withdraw()
 file = askopenfilename() 
 
 df = pd.read_csv(file)
-try:
-    df['Datetime'] = pd.to_datetime(df['date'])
-except:
-    df['Datetime'] = pd.to_datetime(df['Datetime'])
+df = pd.read_csv(file)
+if 'Datetime' not in df.columns and 'date' not in df.columns:
+    df = pd.read_csv(file, header=None, names=['Datetime', 'Open', 'High', 'Low', 'Close', 'Volume'])
+
+# Standardize column name
+if 'date' in df.columns:
+    df.rename(columns={'date': 'Datetime'}, inplace=True)
     
+df['Datetime'] = pd.to_datetime(df['Datetime'])
 df.set_index('Datetime', inplace=True)
+
+df[['Open', 'High', 'Low', 'Close']] = df[['Open', 'High', 'Low', 'Close']].fillna(method='ffill')
 
 df = df.between_time('09:15', '15:25').copy()
 
