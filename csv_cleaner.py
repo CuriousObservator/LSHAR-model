@@ -25,7 +25,7 @@ if 'date' in df.columns:
 df['Datetime'] = pd.to_datetime(df['Datetime'])
 df.set_index('Datetime', inplace=True)
 
-df[['Open', 'High', 'Low', 'Close']] = df[['Open', 'High', 'Low', 'Close']].fillna(method='ffill')
+df[['Open', 'High', 'Low', 'Close']] = df[['open', 'high', 'low', 'close']].ffill()
 
 df = df.between_time('09:15', '15:25').copy()
 
