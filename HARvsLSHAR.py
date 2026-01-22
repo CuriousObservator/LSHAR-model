@@ -48,7 +48,7 @@ def rmse(actual, forecast):
 
 def calc_daily_rv(data):
     start_time = pd.to_datetime('09:15:00').time()
-    end_time = pd.to_datetime('15:30:00').time()
+    end_time = pd.to_datetime('15:25:00').time()
     in_session = data.between_time(start_time, end_time)
     rv = in_session['Ret_sq'].resample('D').sum()
     return rv[rv > 0]
@@ -92,29 +92,6 @@ def _single_max_power_sim(t, y_mean, y_std, freq, len_y):
     power_sim = model_sim.power(freq, normalization="standard")
     return np.max(power_sim)
 
-def mc_fap(t, y, freq, alpha, m=1000, max_workers=None):
-    y_std = np.std(y)
-    y_mean = np.mean(y)
-    len_y = len(y)
-
-    max_powers = []
-
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = [
-            executor.submit(
-                _single_max_power_sim,
-                t, y_mean, y_std, freq, len_y
-            )
-            for _ in range(m)
-        ]
-
-        for future in as_completed(futures):
-            max_powers.append(future.result())
-
-    max_powers.sort()
-    idx = int(np.floor((1 - alpha) * m))
-    idx = max(0, min(idx, m - 1))
-    return max_powers[idx]
 # ======================================================
 # Load data
 # ======================================================
