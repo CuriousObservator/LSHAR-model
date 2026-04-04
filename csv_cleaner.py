@@ -1,46 +1,86 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Wed Dec 24 12:13:28 2025
+Created on Sun Mar 29 14:10:47 2026
 
 @author: rbarcrosspbar
 """
+
 import pandas as pd
 import os
-from tkinter import Tk
-from tkinter.filedialog import askopenfilename
+import tkinter as tk
+from tkinter.filedialog import askdirectory
 
-Tk().withdraw() 
-file = askopenfilename() 
+# ======================================================
+# CONFIGURATION PARAMETERS
+# ======================================================
+MARKET_START = '09:15'
+MARKET_END = '15:25'
+EXPECTED_BARS = 75  # e.g., 375 mins / 5 min bars = 75
+REQUIRED_COLS = ['Open', 'High', 'Low', 'Close']
 
-df = pd.read_csv(file)
-df = pd.read_csv(file)
-if 'Datetime' not in df.columns and 'date' not in df.columns:
-    df = pd.read_csv(file, header=None, names=['Datetime', 'Open', 'High', 'Low', 'Close', 'Volume'])
-
-# Standardize column name
-if 'date' in df.columns:
-    df.rename(columns={'date': 'Datetime'}, inplace=True)
+def process_batch_stocks():
+    # 1. Select Input and Output Folders
+    root = tk.Tk()
+    root.withdraw()
     
-df['Datetime'] = pd.to_datetime(df['Datetime'])
-df.set_index('Datetime', inplace=True)
+    input_folder = askdirectory(title="Select Folder Containing Raw CSVs")
+    if not input_folder:
+        print("No input folder selected.")
+        return
 
-df[['Open', 'High', 'Low', 'Close']] = df[['open', 'high', 'low', 'close']].ffill()
+    output_folder = askdirectory(title="Select/Create Folder for Cleaned CSVs")
+    if not output_folder:
+        print("No output folder selected.")
+        return
 
-df = df.between_time('09:15', '15:25').copy()
+    # Ensure output directory exists
+    os.makedirs(output_folder, exist_ok=True)
 
-BARS_PER_DAY = 75
-df_final = df.groupby(df.index.date).filter(lambda x: len(x) == BARS_PER_DAY).copy()
+    # 2. Loop through all CSV files
+    files = [f for f in os.listdir(input_folder) if f.endswith('.csv')]
+    print(f"Found {len(files)} CSV files. Starting processing...\n")
 
-final_counts = df_final.groupby(df_final.index.date).size()
-total_days_pre_filter = len(df.groupby(df.index.date))
-removed_days = total_days_pre_filter - len(final_counts)
+    for filename in files:
+        file_path = os.path.join(input_folder, filename)
+        print(f"Processing: {filename}...")
 
-print(f"Total days analyzed: {total_days_pre_filter}")
-print(f"Removed {removed_days} incomplete days.")
-print(f"Remaining consistent days: {len(final_counts)}")
+        try:
+            # Load and Pre-process
+            df = pd.read_csv(file_path)
+            df.columns = [c.capitalize() for c in df.columns]
+            
+            if 'Date' in df.columns and 'Datetime' not in df.columns:
+                df.rename(columns={'Date': 'Datetime'}, inplace=True)
+                
+            df['Datetime'] = pd.to_datetime(df['Datetime'])
+            df.set_index('Datetime', inplace=True)
+            df.sort_index(inplace=True)
 
+            # Intra-day Forward Fill (No cross-day leakage)
+            df[REQUIRED_COLS] = df.groupby(df.index.date)[REQUIRED_COLS].ffill()
 
-output_name = f"{os.path.splitext(file)[0]}_Strict_Cleaned.csv"
-df_final.to_csv(output_name)
-print(f"Saved to: {output_name}")
+            # Filter Market Hours
+            df_filtered = df.between_time(MARKET_START, MARKET_END).copy()
+
+            # Strict Day Filtering (Keep only complete days)
+            df_final = df_filtered.groupby(df_filtered.index.date).filter(lambda x: len(x) == EXPECTED_BARS).copy()
+
+            # Save Output with a prefix
+            output_name = os.path.join(output_folder, f"Cleaned_{filename}")
+            df_final.to_csv(output_name)
+            
+            days_before = len(df_filtered.index.normalize().unique())
+            days_after = len(df_final.index.normalize().unique())
+            print(f"   - Done. Kept {days_after}/{days_before} days.")
+
+        except Exception as e:
+            print(f"   - Error processing {filename}: {e}")
+
+    print("\n" + "="*30)
+    print("BATCH PROCESSING COMPLETE")
+    print(f"Cleaned files are in: {output_folder}")
+    print("="*30)
+
+if __name__ == "__main__":
+    process_batch_stocks()
