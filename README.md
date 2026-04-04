@@ -1,68 +1,33 @@
-# Lomb-Scargle HAR (LSHAR) for Volatility Prediction
+# Lomb-Scargle HAR (LSHAR): Spectral Augmentation
 
-This repository implements the **Lomb-Scargle Heterogeneous Autoregressive (LSHAR)** model as detailed in the study "Improving the standard HAR model for volatility prediction using Lomb-Scargle Periodicities". The project evaluates how spectral features from non-uniformly sampled financial data can enhance traditional volatility forecasting.
+This repository implements the **Three-Gate LSHAR Framework** as detailed in the study *"When Does HAR Fail? Tactical Spectral Augmentation via Lomb-Scargle Periodograms"*. 
+
+The project introduces a selective regime-detection strategy that identifies when the standard Heterogeneous Autoregressive (HAR) model fails to capture transient periodicities in realized volatility.
 
 ## Project Overview
 
-The project extends the standard HAR model—which uses daily, weekly, and monthly lags to represent different market participants—by incorporating periodic signals identified via the **Lomb-Scargle Periodogram (LSP)**. The LSP is specifically used to handle the irregular sampling inherent in market data due to weekends and holidays.
+Traditional volatility models like the HAR rely on discrete "box" kernels (daily, weekly, monthly) which assume a static memory structure. This project proposes that volatility periodically enters **"Active Regimes"** where sinusoidal rhythms emerge. 
 
-## Key Features
+We use the **Lomb-Scargle Periodogram (LSP)**—an astrophysical signal processing tool—to identify these rhythms in irregularly sampled financial time series (accounting for weekends and holidays) without the need for interpolation or "gap-filling" which can bias spectral estimates.
 
-* **Spectral Augmentation:** Identifies hidden periodicities in Realized Volatility (RV) data that are not captured by traditional linear lags.
+## The Three-Gate Validation Logic
 
+To resolve the "Hybrid Paradox" (where switching models introduces noise and estimation variance), this implementation employs a rigorous selective activation process:
 
-* **Statistical Significance:** Employs False Alarm Probability (FAP) thresholds, calculated via Monte-Carlo simulations or analytical methods, to filter significant frequencies.
+1.  **Gate 1: Spectral Discovery:** Uses the LSP to identify potential frequencies in Daily Realized Volatility ($RV$).
+2.  **Gate 2: Significance Testing:** Employs a **Moving Block Bootstrap** to calculate False Alarm Probability (FAP), ensuring detected signals are not stochastic artifacts.
+3.  **Gate 3: Persistence Filter:** Only activates the LSHAR model if a frequency remains stable across $k=3$ consecutive rolling windows, ensuring structural reliability.
 
+## Core Findings ($N=99$ NSE Assets)
 
-* **Multi-Frequency Evaluation:** Provides a comparative analysis of model performance on both daily and weekly data resolutions.
-
-
-* **Validation of Efficiency:** Includes a residual analysis to test if the standard HAR model leaves any systematic periodic information uncaptured.
-
-
-
-## Core Findings
-
-* **Daily Advantage:** Standalone LSHAR modeling on daily data consistently outperforms the HAR baseline in predictive precision (QLIKE) and error reduction (RMSE).
-
-
-* **Aggregation Loss:** The predictive edge of spectral features diminishes at a weekly scale as data aggregation smooths out high-frequency rhythms.
-
-
-* **Spectral Efficiency:** Residual tests confirm that the standard HAR model is an efficient filter, as its residuals typically show no significant periodic signals.
-
-
+* **Quality over Quantity:** Sparse, high-confidence spectral interventions (active $<5\%$ of days) deliver a **0.358% QLIKE improvement**, over twice the gain of frequent augmentations ($>15\%$ activity: 0.148%).
+* **Surgical Precision:** Low-activity interventions exhibit a **76% success rate**, outperforming high-activity models by a factor of **2.43x**.
+* **Model Interpretation:** Empirical results confirm that model activity is inversely proportional to predictive value. The LSHAR's value lies in surgical regime detection rather than persistent structural modeling.
+* **Spectral Whitening:** As shown in the study's residual analysis, the LSHAR successfully "whitens" the spectral peaks that the standard HAR model leaves behind, neutralizing unexplained periodic memory.
 
 ## Requirements
 
 * **Python 3.x**
-* **Astropy:** For Lomb-Scargle implementation.
-
-
-* **Statsmodels:** For OLS fitting and HAR baseline construction.
-
-
-* **Pandas & NumPy:** For data manipulation and RV calculations.
-
-
-* **Matplotlib:** For periodogram and volatility trend visualization.
-
-
-
-## Usage
-
-1. **Data Preparation:** Clean raw OHLC data using the provided `clean_csv.py` to ensure proper Indian market timestamps.
-
-
-2. **Feature Engineering:** Generate daily, weekly, and monthly RV components.
-
-
-3. **Model Execution:** Run the walk-forward analysis to evaluate the HAR, LSHAR, and Hybrid models across rolling windows.
-
-
-
-## Author
-
-**MVR Abhishek** 
-
-January 2026
+* **Astropy:** For the Lomb-Scargle implementation.
+* **Statsmodels:** For OLS/WLS fitting and diagnostic testing.
+* **Pandas, NumPy, Matplotlib.**
