@@ -51,4 +51,4 @@ A parallel spectral track operates on weekly-aggregated realized volatility (non
 └── README.md
 ```
 
-Data: NSE 5-minute OHLC for 99 liquid equities available on Kaggle: [NSE Nifty-100 5-minute data](https://www.kaggle.com/).
+Data: NSE 5-minute OHLC for 99 liquid equities available on Kaggle: [NSE Nifty-100 5-minute data](https://www.kaggle.com/datasets/debashis74017/stock-market-data-nifty-100-stocks-5-min-data).
