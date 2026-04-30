@@ -1,0 +1,10 @@
+#All dependencies can be seen in the README.md and must be met before trying the analysis locally.
+
+
+1) The data can be obtained from the Kaggle link present in the GitHub page.
+
+2) Once data is available, the csv_cleaner.py can be run and the source, containing the downloaded raw stock data and destination folder, which will hold the cleaned csvs can be selected in the window that pops up.
+
+#A small note, the data columns for whatever stocks you are using should match the data format used in the kaggle data set, "date","open","high","low","close","volume"
+
+3) The HARvsLSHAR code can be run, and the source file can be set to where the cleaned csvs are saved. The analysis results will be saved in the same folder as the cleaned csvs folder, depending on the PERSISTENCE_WINDOW chosen, they will be titled as, example, "LSHAR_Publication_Results3.csv"
