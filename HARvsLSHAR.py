@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Mon Mar 30 13:21:30 2026
+Created on Tue Apr 28 01:13:55 2026
 
 @author: rbarcrosspbar
 """
-
 
 
 import numpy as np
@@ -20,6 +19,7 @@ import warnings
 from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from typing import Tuple, Optional
+from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
 
@@ -28,7 +28,7 @@ ALPHA = 0.05
 M_SIMULATIONS = 1000        
 LOOKBACK_DAILY = 252        
 LOOKBACK_WEEKLY_LS = 520    
-PERSISTENCE_WINDOW = 4      
+PERSISTENCE_WINDOW = 4 # can be set between 2, 3 and 4      
 PERIOD_TOLERANCE = 0.15     
 
 
@@ -128,8 +128,10 @@ class PeriodTracker:
     """
     Tracks period stability across consecutive detection windows.
 
-    FIX APPLIED: Now requires full window_size observations before activating,
-    consistent with PERSISTENCE_WINDOW=3 documentation.
+    Requires exactly window_size (= PERSISTENCE_WINDOW = 3) consecutive
+    detections whose coefficient of variation is below PERIOD_TOLERANCE before
+    activating spectral augmentation. A single missing detection resets the
+    history, enforcing strict structural reliability.
     """
 
     def __init__(self, window_size: int = PERSISTENCE_WINDOW,
@@ -268,14 +270,18 @@ def process_single_file(filename: str, input_folder: str) -> dict:
                 pred_lshar     = np.exp(pred_lshar_log + m_lshar.mse_resid / 2)
 
             
-            resids = log_rv_current - har_model.predict(X_train_log)
+            # ResidLS: residuals computed against the same next-day log-RV
+            # target the HAR model was trained on, so actual and fitted values
+            # are time-aligned. t_train_next used for both the bootstrap and
+            # the periodogram to match the regression target horizon.
+            resids = train['Target_Log_RV'].values - har_model.predict(X_train_log)
 
             if fap_resid is None or prev_std_resid is None or \
                abs(resids.std() - prev_std_resid) > 0.2 * prev_std_resid or i % 30 == 0:
-                fap_resid      = get_bootstrap_threshold(t_train, resids, freqs)
+                fap_resid      = get_bootstrap_threshold(t_train_next, resids, freqs)
                 prev_std_resid = resids.std()
 
-            p_resid   = LombScargle(t_train, resids, normalization='standard').power(freqs)
+            p_resid   = LombScargle(t_train_next, resids, normalization='standard').power(freqs)
             peaks_b, _ = find_peaks(p_resid, height=fap_resid)
 
             detected_p_resid = None
@@ -480,14 +486,18 @@ def main():
     print("=" * 80 + "\n")
 
     with ProcessPoolExecutor() as ex:
-        final_results = list(ex.map(partial(process_single_file, input_folder=path), files))
+        final_results = list(tqdm(
+            ex.map(partial(process_single_file, input_folder=path), files),
+            total=len(files), desc="Processing stocks", unit="stock",
+            bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} stocks  [{elapsed}<{remaining}]"
+        ))
 
     summary = pd.DataFrame([r for r in final_results if 'Error' not in r])
     errors  = pd.DataFrame([r for r in final_results if 'Error' in r])
 
-    summary.to_csv(os.path.join(path, "LSHAR_Publication_Results7.csv"), index=False)
+    summary.to_csv(os.path.join(path, f"LSHAR_Publication_Results{PERSISTENCE_WINDOW}.csv"), index=False)
     if len(errors) > 0:
-        errors.to_csv(os.path.join(path, "Processing_Errors.csv"), index=False)
+        errors.to_csv(os.path.join(path, f"Processing_Errors{PERSISTENCE_WINDOW}.csv"), index=False)
 
     print("\n" + "=" * 80)
     print("ANALYSIS COMPLETE")
@@ -517,9 +527,6 @@ def main():
     print(f"Results saved to: LSHAR_Publication_Results.csv")
     print("=" * 80)
 
-
-if __name__ == "__main__":
-    main()
 
 if __name__ == "__main__":
     main()
