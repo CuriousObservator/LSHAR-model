@@ -28,7 +28,7 @@ ALPHA = 0.05
 M_SIMULATIONS = 1000        
 LOOKBACK_DAILY = 252        
 LOOKBACK_WEEKLY_LS = 520    
-PERSISTENCE_WINDOW = 4 # can be set between 2, 3 and 4      
+PERSISTENCE_WINDOW = 3 # can be set between 2, 3 and 4      
 PERIOD_TOLERANCE = 0.15     
 
 
