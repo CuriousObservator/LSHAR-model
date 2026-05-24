@@ -5,7 +5,8 @@ pandas
 statsmodels
 astropy
 scipy
+argparse
 tqdm
 tkinter   # standard library, for folder picker
 
-pip install numpy pandas statsmodels astropy scipy tqdm
+pip install numpy pandas statsmodels astropy scipy tqdm argparse
