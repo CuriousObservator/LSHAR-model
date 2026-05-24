@@ -20,6 +20,7 @@ from concurrent.futures import ProcessPoolExecutor
 from functools import partial
 from typing import Tuple, Optional
 from tqdm import tqdm
+import argparse
 
 warnings.filterwarnings("ignore")
 
@@ -465,11 +466,20 @@ def process_single_file(filename: str, input_folder: str) -> dict:
 
 def main():
     """Run full analysis pipeline."""
-    root = tk.Tk()
-    root.withdraw()
-    path = filedialog.askdirectory(title="Select Data Folder")
-    if not path:
-        return
+    parser = argparse.ArgumentParser(description="LSHAR Model Analysis")
+    parser.add_argument('--data-dir', type=str, default=None,
+                        help="Path to folder containing CSV files. "
+                             "If not provided, a folder picker dialog will open.")
+    args = parser.parse_args()
+
+    if args.data_dir:
+        path = args.data_dir
+    else:
+        root = tk.Tk()
+        root.withdraw()
+        path = filedialog.askdirectory(title="Select Data Folder")
+        if not path:
+            return
 
     files = [f for f in os.listdir(path) if f.endswith('.csv')]
 
