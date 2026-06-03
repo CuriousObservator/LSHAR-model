@@ -25,7 +25,7 @@ The central finding is that periodic volatility structure in NSE equities is **a
 ├── LSHAR_Publication_Results4.csv       # Full per-asset results, k=4
 └── Requirements.txt                     # pip-readable package requirements
 └── README.md
-
+└── LSHAR.pdf                            # PDF document of the paper
 ```
 
 ---
