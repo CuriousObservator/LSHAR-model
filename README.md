@@ -10,7 +10,7 @@
 
 This repository contains the full implementation of the LSHAR (Lomb–Scargle Heterogeneous Autoregressive) framework, which detects and exploits persistent periodic structure in NSE realized volatility using a spectral estimator designed for irregularly sampled time series.
 
-The central finding is that periodic volatility structure in NSE equities is **asset-specific in its timescale**: a daily-resolution Lomb–Scargle detector and a weekly-aggregated detector identify largely non-overlapping sets of stocks (activation correlation ≈ 0.00). Rather than positioning the detected cycles as a universal HAR replacement, the framework is best interpreted as a **volatility regime filter** — a binary signal identifying when a stock's realized volatility is governed by a recurring periodic component, with direct implications for options pricing and volatility-sensitive strategies.
+The central finding is that periodic volatility structure in NSE equities is **asset-specific in its timescale**: a daily-resolution Lomb–Scargle detector and a weekly-aggregated detector identify largely non-overlapping sets of stocks (activation correlation ≈ 0.00). Rather than positioning the detected cycles as a universal HAR replacement, the framework is best interpreted as a **volatility regime filter** — a binary signal identifying when a stock's realized volatility is governed by a recurring periodic component, with direct implications for options pricing and volatility-sensitive strategies. 
 
 ---
 
@@ -23,7 +23,9 @@ The central finding is that periodic volatility structure in NSE equities is **a
 ├── LSHAR_Publication_Results2.csv       # Full per-asset results, k=2
 ├── LSHAR_Publication_Results3.csv       # Full per-asset results, k=3 (baseline)
 ├── LSHAR_Publication_Results4.csv       # Full per-asset results, k=4
+└── Requirements.txt                     # pip-readable package requirements
 └── README.md
+
 ```
 
 ---
