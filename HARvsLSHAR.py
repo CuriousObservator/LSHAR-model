@@ -534,7 +534,7 @@ def main():
                        'WeeklyLS_Active_Days', 'WeeklyLS_Improvement_Pct')
 
     print("\n" + "=" * 80)
-    print(f"Results saved to: LSHAR_Publication_Results.csv")
+    print(f"Results saved to: LSHAR_Publication_Results{PERSISTENCE_WINDOW}.csv")
     print("=" * 80)
 
 
