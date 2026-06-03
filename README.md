@@ -56,7 +56,7 @@ python csv_cleaner.py
 | `M_SIMULATIONS` | `1000` | Bootstrap replications for FAP threshold |
 | `LOOKBACK_DAILY` | `252` | Rolling window for HAR / daily LS (trading days) |
 | `LOOKBACK_WEEKLY_LS` | `520` | Lookback for weekly aggregated LS (~104 weekly observations) |
-| `PERSISTENCE_WINDOW` | `4` | Consecutive detections required before activation — set to 2, 3, or 4 |
+| `PERSISTENCE_WINDOW` | `3` | Consecutive detections required before activation — set to 2, 3, or 4 |
 | `PERIOD_TOLERANCE` | `0.15` | Max coefficient of variation for period stability (15%) |
 
 To reproduce baseline paper results set `PERSISTENCE_WINDOW = 3`. The three results CSVs correspond to runs with `PERSISTENCE_WINDOW` set to 2, 3, and 4 respectively.
