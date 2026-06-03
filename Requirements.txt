@@ -1,12 +1,6 @@
-Dependencies:
-
-numpy
-pandas
-statsmodels
-astropy
-scipy
-argparse
-tqdm
-tkinter   # standard library, for folder picker
-
-pip install numpy pandas statsmodels astropy scipy tqdm argparse
+numpy==1.26.4
+pandas==2.2.2
+statsmodels==0.14.2
+astropy==6.1.0
+scipy==1.13.1
+tqdm==4.66.4
