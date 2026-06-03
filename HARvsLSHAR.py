@@ -293,7 +293,7 @@ def process_single_file(filename: str, input_folder: str) -> dict:
             pred_resid = pred_har
 
             if active_resid and stable_p_resid is not None:
-                ls_train_r = get_spectral_features(t_train, [stable_p_resid])
+                ls_train_r = get_spectral_features(t_train_next, [stable_p_resid])
                 X_resid    = pd.concat([
                     pd.DataFrame(X_train_log.values, columns=X_train_log.columns),
                     ls_train_r.reset_index(drop=True)
@@ -301,7 +301,7 @@ def process_single_file(filename: str, input_folder: str) -> dict:
 
                 m_resid    = sm.OLS(train['Target_Log_RV'].values, X_resid).fit()
 
-                ls_test_r  = get_spectral_features(np.array([t_test]), [stable_p_resid])
+                ls_test_r  = get_spectral_features(np.array([t_test_next]), [stable_p_resid])
                 X_test_resid = pd.concat([
                     pd.DataFrame(X_test_log.values, columns=X_test_log.columns),
                     ls_test_r.reset_index(drop=True)
